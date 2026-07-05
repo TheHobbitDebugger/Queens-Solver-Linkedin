@@ -109,7 +109,7 @@
     border-radius: 6px;
   }
 
-  /* Button styling shared by the console-script and bookmarklet copy buttons. */
+  /* Button styling for the console-script copy button. */
   button {
     border: 1px solid #17202a;
     border-radius: 6px;
@@ -202,8 +202,6 @@
     <div class="row">
       <!-- Raw console script is the most reliable way to run the bot. -->
       <button id="copyBotBtn" class="primary" type="button">Copy console bot</button>
-      <!-- Bookmarklet is convenient, but browsers may reject long bookmarklets. -->
-      <button id="copyBookmarkletBtn" type="button">Copy bookmarklet</button>
     </div>
     <!-- Generated source is visible so users can inspect or manually copy it. -->
     <textarea id="botCode" readonly spellcheck="false"></textarea>
@@ -984,14 +982,6 @@ document.getElementById("copyBotBtn").addEventListener("click", async () => {
   refreshBotCode();
   const ok = await copyText(botCodeEl.value);
   botStatusEl.textContent = ok ? "Console bot copied." : "Copy failed. Select the code and copy it manually.";
-});
-
-/* Copy the same JavaScript as a bookmark URL. Long bookmarklets may be blocked. */
-document.getElementById("copyBookmarkletBtn").addEventListener("click", async () => {
-  refreshBotCode();
-  const bookmarklet = "javascript:" + encodeURIComponent(botCodeEl.value);
-  const ok = await copyText(bookmarklet);
-  botStatusEl.textContent = ok ? "Bookmarklet copied." : "Copy failed. Select the code and copy it manually.";
 });
 
 /* Keep the preview in sync with the minimum-time setting. */
