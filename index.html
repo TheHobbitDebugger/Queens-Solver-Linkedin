@@ -731,9 +731,18 @@ function makeQueensBotSource() {
           const regionCount = new Set(colors).size;
           const cellSide = median(cells.map(cell => cell.side));
           const sizeSpread = Math.max(...cells.map(cell => Math.abs(cell.side - cellSide)));
-          // Penalize grids whose color count is not the expected board size.
-          const regionPenalty = Math.abs(regionCount - size) * width * height * 0.2;
-          const score = Math.abs(width - height) * 8 + width * height + sizeSpread * 30 + regionPenalty;
+          /*
+            Prefer candidates that look like a complete Queens board.
+
+            Earlier versions minimized visible area, which was useful for some
+            scanners but risky here: a 4x4 or 5x5 sub-square inside a larger
+            board can look perfectly grid-like. Queens boards should have the
+            same number of colored regions as rows/columns, and the full board
+            is normally the largest such grid on the page.
+          */
+          const regionMismatch = Math.abs(regionCount - size);
+          const shapeScore = Math.abs(width - height) * 8 + sizeSpread * 30;
+          const score = regionMismatch * 1000000 - size * 100000 + shapeScore;
 
           if (!best || score < best.score) {
             // Keep the best-looking grid so unrelated page controls are ignored.
@@ -766,6 +775,20 @@ function makeQueensBotSource() {
       regions.push(ids.get(color));
     }
     return { regions, count: ids.size };
+  }
+
+  // Format the scanned region ids as rows for console diagnostics.
+  function regionRows(regions, size) {
+    const rows = [];
+    for (let row = 0; row < size; row++) {
+      rows.push(regions.slice(row * size, row * size + size).join(" "));
+    }
+    return rows;
+  }
+
+  // Convert a row-major cell index into a human-readable row/column label.
+  function cellLabel(index, size) {
+    return "r" + (Math.floor(index / size) + 1) + "c" + (index % size + 1);
   }
 
   /*
@@ -874,7 +897,9 @@ function makeQueensBotSource() {
     }, { stats: { visited: 0, backtracks: 0 } });
 
     if (!result.solution) {
-      log(result.error || "No solution found. The color scanner may have misread regions.");
+      console.warn("[Queens bot] Scanned region rows:", regionRows(regionData.regions, grid.size));
+      console.warn("[Queens bot] Existing queens:", fixedQueens.map(index => cellLabel(index, grid.size)));
+      log((result.error || "No solution found.") + " Scanned " + grid.size + "x" + grid.size + " board with " + fixedQueens.length + " existing queens; region map was logged to the console.");
       return;
     }
 
