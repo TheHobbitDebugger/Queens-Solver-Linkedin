@@ -1,22 +1,44 @@
 <!DOCTYPE html>
+<!--
+  Queens Solver and Chrome Bot
+
+  This file is intentionally self-contained. Opening it locally gives you a
+  small helper UI that generates JavaScript. That generated JavaScript is then
+  pasted into the LinkedIn Queens page, where it can read and click that page's
+  DOM. A local file cannot directly control another browser tab because of
+  browser same-origin security rules.
+-->
 <html lang="en">
 <head>
+<!-- UTF-8 keeps chess symbols and copied script text stable across browsers. -->
 <meta charset="UTF-8">
+<!-- Make the helper usable on narrow windows as well as normal desktop Chrome. -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Queens Solver and Chrome Bot</title>
 <style>
+  /*
+    Design tokens used by the helper page only. The generated bot has its own
+    inline overlay styles so it does not depend on LinkedIn's CSS.
+  */
   :root {
+    /* Main readable text color. */
     --ink: #17202a;
+    /* Secondary explanatory text color. */
     --muted: #5c6670;
+    /* Dark border color for buttons and high-contrast UI edges. */
     --line: #222;
+    /* Soft background color for status panels. */
     --panel: #f4f6f8;
+    /* Primary action color for the copy button. */
     --accent: #7dd3fc;
   }
 
+  /* Include padding and border in width/height calculations everywhere. */
   * {
     box-sizing: border-box;
   }
 
+  /* Page shell: no default margin, system font, and a quiet work-tool background. */
   body {
     margin: 0;
     min-height: 100vh;
@@ -25,6 +47,10 @@
     background: #f8fafc;
   }
 
+  /*
+    Two-column layout: rules on the left, bot controls on the right. The media
+    query below collapses this to one column on small screens.
+  */
   main {
     width: min(920px, 100%);
     margin: 0 auto;
@@ -34,17 +60,20 @@
     gap: 24px;
   }
 
+  /* Compact tool title. This is not a marketing page, so the type stays modest. */
   h1 {
     margin: 0 0 8px;
     font-size: 1.55rem;
     line-height: 1.2;
   }
 
+  /* Supporting text uses the muted color to separate it from controls. */
   p {
     margin: 0;
     color: var(--muted);
   }
 
+  /* The right-side panel frames controls and generated code. */
   .controls {
     background: #fff;
     border: 1px solid #dde3ea;
@@ -53,6 +82,7 @@
     box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
   }
 
+  /* A horizontal control row: label/input, or adjacent buttons. */
   .row {
     display: flex;
     align-items: center;
@@ -60,15 +90,18 @@
     margin-bottom: 12px;
   }
 
+  /* Labels are slightly heavier so the compact form remains scannable. */
   label {
     font-weight: 650;
   }
 
+  /* Form controls inherit the page font unless overridden for code textareas. */
   input,
   textarea {
     font: inherit;
   }
 
+  /* Minimum-seconds input is short because values are small numbers. */
   input[type="number"] {
     width: 96px;
     padding: 8px;
@@ -76,6 +109,7 @@
     border-radius: 6px;
   }
 
+  /* Button styling shared by the console-script and bookmarklet copy buttons. */
   button {
     border: 1px solid #17202a;
     border-radius: 6px;
@@ -86,14 +120,17 @@
     cursor: pointer;
   }
 
+  /* The console bot copy path is the primary, most reliable workflow. */
   button.primary {
     background: var(--accent);
   }
 
+  /* Subtle hover feedback without layout shift. */
   button:hover {
     filter: brightness(0.97);
   }
 
+  /* Read-only preview of the generated JavaScript. */
   textarea {
     width: 100%;
     min-height: 360px;
@@ -106,6 +143,7 @@
     line-height: 1.4;
   }
 
+  /* Status message under the code preview. */
   .status-box {
     margin-top: 12px;
     padding: 10px 12px;
@@ -116,16 +154,19 @@
     min-height: 42px;
   }
 
+  /* Local explanation of the Queens rules that the solver enforces. */
   .rule-list {
     margin: 16px 0 0;
     padding-left: 18px;
     color: var(--muted);
   }
 
+  /* Give each rule a little vertical air. */
   .rule-list li {
     margin: 7px 0;
   }
 
+  /* Collapse the two columns on phone-sized viewports. */
   @media (max-width: 760px) {
     main {
       grid-template-columns: 1fr;
@@ -136,6 +177,7 @@
 </head>
 <body>
 <main>
+  <!-- Static left column: what this helper does and what rules it solves. -->
   <section>
     <h1>Queens Solver</h1>
     <p>Generate a Chrome-console bot for LinkedIn Queens.</p>
@@ -147,80 +189,158 @@
     </ul>
   </section>
 
+  <!-- Interactive right column: build/copy the script that will run on LinkedIn. -->
   <section class="controls">
     <div class="row">
       <label for="minSolveSeconds">Minimum seconds</label>
+      <!--
+        This delay is embedded in the generated bot. It spaces out clicks so the
+        visible solving process can take at least the selected time.
+      -->
       <input id="minSolveSeconds" type="number" min="0" max="300" step="0.5" value="0">
     </div>
     <div class="row">
+      <!-- Raw console script is the most reliable way to run the bot. -->
       <button id="copyBotBtn" class="primary" type="button">Copy console bot</button>
+      <!-- Bookmarklet is convenient, but browsers may reject long bookmarklets. -->
       <button id="copyBookmarkletBtn" type="button">Copy bookmarklet</button>
     </div>
+    <!-- Generated source is visible so users can inspect or manually copy it. -->
     <textarea id="botCode" readonly spellcheck="false"></textarea>
+    <!-- Copy success/failure feedback appears here. -->
     <div id="botStatus" class="status-box">Bot script ready.</div>
   </section>
 </main>
 
 <script>
+/*
+  The code below has two responsibilities:
+
+  1. Run in this local helper page to build/copy a bot script.
+  2. Provide pure functions that can be serialized into that generated bot.
+
+  The generated bot is a string returned by makeQueensBotSource(). It runs later
+  inside the LinkedIn page, where it has access to LinkedIn's DOM.
+*/
+
+/* Cached DOM references for the local helper UI. */
 const minSolveSecondsInp = document.getElementById("minSolveSeconds");
 const botCodeEl = document.getElementById("botCode");
 const botStatusEl = document.getElementById("botStatus");
 
+/*
+  Convert the local "Minimum seconds" input into milliseconds.
+  Invalid, blank, or negative values become zero; very large values are capped so
+  a typo cannot create a multi-hour click schedule.
+*/
 function getMinimumSolveMs() {
   const seconds = Number(minSolveSecondsInp.value);
   if (!Number.isFinite(seconds) || seconds <= 0) return 0;
   return Math.min(seconds, 300) * 1000;
 }
 
+/*
+  Pure Queens solver.
+
+  Input:
+  - size: board width/height, usually one of LinkedIn's square sizes.
+  - regions: one numeric region id per cell, in row-major order.
+  - fixedQueens: optional row-major cell indexes that already contain queens.
+
+  Output:
+  - solution: row-major indexes where queens should be placed, or null.
+  - error: human-readable failure reason when solution is null.
+  - stats: small search counters for overlay feedback.
+
+  LinkedIn Queens rules enforced here:
+  - exactly one queen in every row, because assignment[row] stores one column.
+  - exactly one queen in every column, via usedCols.
+  - exactly one queen in every colored region, via usedRegions.
+  - no two queens may touch diagonally. LinkedIn Queens does not use the full
+    chess diagonal attack rule; only adjacent diagonals are forbidden.
+*/
 function solveQueens(puzzle, options = {}) {
+  /* Normalize inputs defensively because the generated bot builds them from DOM. */
   const n = Number(puzzle.size);
   const regions = Array.isArray(puzzle.regions) ? puzzle.regions : [];
   const fixedQueens = Array.isArray(puzzle.fixedQueens) ? puzzle.fixedQueens : [];
   const stats = options.stats || { visited: 0, backtracks: 0 };
 
+  /* Standard failure shape keeps local and generated-bot error handling simple. */
   function fail(message) {
     return { solution: null, error: message, stats };
   }
 
+  /* Reject impossible or suspicious board sizes before indexing arrays. */
   if (!Number.isInteger(n) || n < 4 || n > 14) {
     return fail("Board size is invalid.");
   }
 
+  /* The scanner must provide exactly one region id for every cell. */
   if (regions.length !== n * n) {
     return fail("Region data is incomplete.");
   }
 
+  /*
+    LinkedIn Queens boards have the same number of regions as rows/columns.
+    If the color scanner finds a different number, it probably read the wrong
+    elements or missed a color.
+  */
   const regionSet = new Set(regions);
   if (regionSet.size !== n) {
     return fail("Expected " + n + " colored regions, found " + regionSet.size + ".");
   }
 
+  /*
+    Convert existing queens into a row -> column map. The solver can then honor
+    a puzzle that the user has already partly filled.
+  */
   const fixedByRow = new Map();
   for (const index of fixedQueens) {
+    /* Reject invalid DOM-derived indexes instead of silently corrupting search. */
     if (!Number.isInteger(index) || index < 0 || index >= n * n) {
       return fail("A fixed queen is outside the board.");
     }
     const row = Math.floor(index / n);
     const col = index % n;
+    /* Two different fixed queens in one row cannot be solved. */
     if (fixedByRow.has(row) && fixedByRow.get(row) !== col) {
       return fail("Two fixed queens are in the same row.");
     }
     fixedByRow.set(row, col);
   }
 
+  /*
+    assignment[row] is the selected column for that row, or -1 if no queen has
+    been placed in that row yet. This representation automatically guarantees
+    at most one queen per row.
+  */
   const assignment = new Array(n).fill(-1);
+  /* Fast membership sets for the one-column and one-region rules. */
   const usedCols = new Set();
   const usedRegions = new Set();
 
+  /* Look up the region id for a row/column coordinate. */
   function regionAt(row, col) {
     return regions[row * n + col];
   }
 
+  /*
+    Test whether a queen can be placed at row/col without breaking any rule.
+    This is called many times during backtracking, so it uses the fast sets above.
+  */
   function canPlace(row, col) {
+    /* If this row is already assigned, only that exact column is legal. */
     if (assignment[row] !== -1 && assignment[row] !== col) return false;
+    /* One queen per column. */
     if (usedCols.has(col)) return false;
     const region = regionAt(row, col);
+    /* One queen per colored region. */
     if (usedRegions.has(region)) return false;
+    /*
+      LinkedIn's no-touching rule only cares about immediate diagonal neighbors.
+      A queen two or more rows away does not violate this rule.
+    */
     for (let otherRow = 0; otherRow < n; otherRow++) {
       const otherCol = assignment[otherRow];
       if (otherCol === -1) continue;
@@ -229,18 +349,21 @@ function solveQueens(puzzle, options = {}) {
     return true;
   }
 
+  /* Mutate solver state to include a queen at row/col. */
   function place(row, col) {
     assignment[row] = col;
     usedCols.add(col);
     usedRegions.add(regionAt(row, col));
   }
 
+  /* Undo place(row, col) during backtracking. */
   function unplace(row, col) {
     assignment[row] = -1;
     usedCols.delete(col);
     usedRegions.delete(regionAt(row, col));
   }
 
+  /* Seed the search with any queens already present on the LinkedIn board. */
   for (const [row, col] of fixedByRow) {
     if (!canPlace(row, col)) {
       return fail("Fixed queens already conflict.");
@@ -248,7 +371,9 @@ function solveQueens(puzzle, options = {}) {
     place(row, col);
   }
 
+  /* Return all currently legal columns for one unfilled row. */
   function legalColumns(row) {
+    /* Fixed rows cannot choose a different column. */
     if (fixedByRow.has(row)) return assignment[row] === fixedByRow.get(row) ? [fixedByRow.get(row)] : [];
     const cols = [];
     for (let col = 0; col < n; col++) {
@@ -257,6 +382,10 @@ function solveQueens(puzzle, options = {}) {
     return cols;
   }
 
+  /*
+    Choose the next row using the minimum-remaining-values heuristic: pick the
+    row with the fewest legal columns. That keeps the search tree small.
+  */
   function chooseRow() {
     let bestRow = -1;
     let bestCols = null;
@@ -272,10 +401,13 @@ function solveQueens(puzzle, options = {}) {
     return { row: bestRow, cols: bestCols || [] };
   }
 
+  /* Recursive backtracking search. */
   function search() {
     stats.visited++;
     const choice = chooseRow();
+    /* Every row has a queen, so the assignment is complete. */
     if (choice.row === -1) return true;
+    /* No legal value for this row means this branch is impossible. */
     if (choice.cols.length === 0) {
       stats.backtracks++;
       return false;
@@ -283,6 +415,7 @@ function solveQueens(puzzle, options = {}) {
 
     for (const col of choice.cols) {
       place(choice.row, col);
+      /* Stop at the first valid solution; LinkedIn puzzles are designed to have one. */
       if (search()) return true;
       unplace(choice.row, col);
     }
@@ -290,22 +423,32 @@ function solveQueens(puzzle, options = {}) {
     return false;
   }
 
+  /* If all branches fail, either the puzzle is inconsistent or scan data is wrong. */
   if (!search()) {
     return fail("No solution found.");
   }
 
+  /* Convert row -> column assignment back into row-major cell indexes. */
   const solution = assignment.map((col, row) => row * n + col);
   return { solution, stats };
 }
 
 function makeQueensBotSource() {
   return `(() => {
+  // This entire function body runs inside the LinkedIn Queens page.
+  // It is generated by the local helper, copied, and pasted into DevTools.
+
+  // Include the pure solver by serializing its source text into the bot.
   const solveQueens = ${solveQueens.toString()};
+  // Small async delay helper used for paced clicking and UI update waits.
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // The local helper bakes the current "Minimum seconds" value into this script.
   const MIN_SOLVE_MS = ${getMinimumSolveMs()};
 
+  // Reuse the overlay on repeated runs so the page does not accumulate messages.
   let overlay = document.getElementById("queens-bot-overlay");
   if (!overlay) {
+    // Inline styles avoid depending on LinkedIn class names or loaded CSS.
     overlay = document.createElement("div");
     overlay.id = "queens-bot-overlay";
     overlay.style.cssText = [
@@ -325,28 +468,44 @@ function makeQueensBotSource() {
     document.body.appendChild(overlay);
   }
 
+  // Show status both in the page overlay and in DevTools Console.
   function log(message) {
     overlay.textContent = "Queens bot: " + message;
     console.log("[Queens bot]", message);
   }
 
+  /*
+    Return a usable viewport rectangle for a visible element.
+    minSize lets cell scans ignore tiny icons while color scans can inspect
+    smaller descendants inside a cell.
+  */
   function visibleRect(element, minSize) {
+    // Only element nodes have styles and layout rectangles.
     if (!element || element.nodeType !== 1) return null;
     const style = getComputedStyle(element);
+    // Ignore CSS-hidden elements.
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return null;
     const rect = element.getBoundingClientRect();
     const minimum = minSize || 20;
+    // Ignore tiny elements unless a caller explicitly asked for tiny candidates.
     if (rect.width < minimum || rect.height < minimum) return null;
+    // Ignore elements outside the visible viewport.
     if (rect.bottom < 0 || rect.right < 0 || rect.top > innerHeight || rect.left > innerWidth) return null;
     return rect;
   }
 
+  // True when a rectangle is close enough to a square to plausibly be a board cell.
   function squareish(rect) {
     const side = (rect.width + rect.height) / 2;
     const maxVisibleCell = Math.max(180, Math.min(420, Math.min(innerWidth, innerHeight) * 0.25));
     return side >= 22 && side <= maxVisibleCell && Math.abs(rect.width - rect.height) <= Math.max(10, side * 0.35);
   }
 
+  /*
+    Cluster entries by their x or y center.
+    Board cells in the same row have similar y centers; cells in the same column
+    have similar x centers.
+  */
   function cluster(entries, prop, tolerance) {
     const groups = [];
     const sorted = entries.slice().sort((a, b) => a[prop] - b[prop]);
@@ -362,11 +521,17 @@ function makeQueensBotSource() {
     return groups;
   }
 
+  // Median is used as a robust typical cell-size estimate.
   function median(values) {
     const sorted = values.slice().sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length / 2)] || 0;
   }
 
+  /*
+    Gather all semantic hints from an element and its descendants.
+    LinkedIn can expose queens through text, aria labels, class names, data
+    attributes, SVG titles, or CSS pseudo-element content.
+  */
   function textBundle(element) {
     const bits = [];
     function addNodeHints(node) {
@@ -380,9 +545,12 @@ function makeQueensBotSource() {
       }
     }
     addNodeHints(element);
+    // Visible descendant text catches normal text-rendered symbols.
     bits.push(element.textContent || "");
+    // Attribute scan catches generated class names, aria labels, and data ids.
     element.querySelectorAll("*").forEach(addNodeHints);
     try {
+      // Some icons are rendered with CSS generated content.
       const before = getComputedStyle(element, "::before").content;
       const after = getComputedStyle(element, "::after").content;
       if (before && before !== "none") bits.push(before);
@@ -391,6 +559,7 @@ function makeQueensBotSource() {
     return bits.join(" ").toLowerCase();
   }
 
+  // True when a CSS background color is usable as a region color.
   function meaningfulColor(color) {
     if (!color || color === "transparent") return false;
     const match = color.match(/rgba?\\(([^)]+)\\)/i);
@@ -400,6 +569,11 @@ function makeQueensBotSource() {
     return true;
   }
 
+  /*
+    Convert browser color strings into stable region keys.
+    Alpha is ignored after transparency has been filtered out, because the same
+    region can be represented as rgb(...) or rgba(..., 1).
+  */
   function normalizeColor(color) {
     const match = (color || "").match(/rgba?\\(([^)]+)\\)/i);
     if (!match) return color || "unknown";
@@ -407,6 +581,11 @@ function makeQueensBotSource() {
     return parts.join(",");
   }
 
+  /*
+    Determine the color-region key for one detected cell.
+    The largest meaningful background among the cell and its descendants usually
+    corresponds to the visible colored square, while tiny icon backgrounds do not.
+  */
   function cellColor(cell) {
     const nodes = [cell.element].concat(Array.from(cell.element.querySelectorAll("*")).slice(0, 60));
     let best = null;
@@ -423,11 +602,17 @@ function makeQueensBotSource() {
     return normalizeColor(getComputedStyle(cell.element).backgroundColor);
   }
 
+  // Read whether a cell currently contains a queen/crown icon.
   function cellHasQueen(element) {
     const text = textBundle(element);
     return /(queen|crown|\\u2655|\\u265b)/i.test(text);
   }
 
+  /*
+    Collect visible elements that could be board cells.
+    The selector list catches semantic cells first; the full-body fallback keeps
+    the bot resilient if LinkedIn changes class names or ARIA roles.
+  */
   function candidateEntries() {
     const selectors = [
       "button",
@@ -446,10 +631,14 @@ function makeQueensBotSource() {
     const entries = [];
 
     for (const element of raw) {
+      // Ignore non-layout SVG internals and script/style tags.
       if (["SCRIPT", "STYLE", "SVG", "PATH"].includes(element.tagName)) continue;
+      // Prefer a clickable or gridcell ancestor when the raw match is an inner span.
       const target = element.closest("button,[role='button'],[role='gridcell']") || element;
+      // Do not process the same clickable/grid cell more than once.
       if (seen.has(target)) continue;
       const rect = visibleRect(target, 18);
+      // Keep only visible square-ish things.
       if (!rect || !squareish(rect)) continue;
       seen.add(target);
       entries.push({
@@ -464,26 +653,42 @@ function makeQueensBotSource() {
     return entries;
   }
 
+  /*
+    Find the Queens board among visible square candidates.
+
+    The scanner does not rely on one LinkedIn selector. It clusters candidates
+    into row/column grids, tries square board sizes from 4 through 12, and scores
+    each candidate by shape, cell-size consistency, and whether it has exactly
+    one color region per row/column as LinkedIn Queens should.
+  */
   function findGrid() {
     const entries = candidateEntries();
+    // Remember this count so failure messages can distinguish no candidates from bad clustering.
     findGrid.lastCandidateCount = entries.length;
     if (entries.length < 16) return null;
+    // Typical candidate size controls coordinate clustering tolerance.
     const side = median(entries.map(entry => entry.side));
     const tolerance = Math.max(8, side * 0.38);
+    // A board row needs at least a few square candidates.
     const rowGroups = cluster(entries, "cy", tolerance).filter(group => group.items.length >= 4);
     let best = null;
 
+    // LinkedIn Queens board sizes vary, so try plausible square sizes.
     for (let size = 4; size <= 12; size++) {
+      // Try every contiguous block of rows with this size.
       for (let rowStart = 0; rowStart <= rowGroups.length - size; rowStart++) {
         const rows = rowGroups.slice(rowStart, rowStart + size);
         const rowItems = rows.flatMap(row => row.items);
+        // Infer columns using only the candidate cells in these rows.
         const colGroups = cluster(rowItems, "cx", tolerance).filter(group => group.items.length >= Math.max(3, size - 2));
 
+        // Try every contiguous block of columns with this size.
         for (let colStart = 0; colStart <= colGroups.length - size; colStart++) {
           const cols = colGroups.slice(colStart, colStart + size);
           const cells = [];
           let ok = true;
 
+          // For each row/column intersection, choose the closest matching element.
           for (const row of rows) {
             for (const col of cols) {
               const hits = row.items
@@ -498,7 +703,9 @@ function makeQueensBotSource() {
             if (!ok) break;
           }
 
+          // A real board candidate must have every cell present and unique.
           if (!ok || new Set(cells.map(cell => cell.element)).size !== size * size) continue;
+          // Compute the outer bounds to reject non-square page regions.
           const left = Math.min(...cells.map(cell => cell.rect.left));
           const top = Math.min(...cells.map(cell => cell.rect.top));
           const right = Math.max(...cells.map(cell => cell.rect.right));
@@ -508,6 +715,7 @@ function makeQueensBotSource() {
           const aspect = width / height;
           if (aspect < 0.75 || aspect > 1.35) continue;
 
+          // Reorder cells row-major: row 0 left-to-right, then row 1, etc.
           const ordered = [];
           for (const row of rows) {
             const rowCells = cells
@@ -518,14 +726,17 @@ function makeQueensBotSource() {
           }
           if (ordered.length !== size * size) continue;
 
+          // Region colors are the core Queens clues; count them for scoring.
           const colors = ordered.map(cellColor);
           const regionCount = new Set(colors).size;
           const cellSide = median(cells.map(cell => cell.side));
           const sizeSpread = Math.max(...cells.map(cell => Math.abs(cell.side - cellSide)));
+          // Penalize grids whose color count is not the expected board size.
           const regionPenalty = Math.abs(regionCount - size) * width * height * 0.2;
           const score = Math.abs(width - height) * 8 + width * height + sizeSpread * 30 + regionPenalty;
 
           if (!best || score < best.score) {
+            // Keep the best-looking grid so unrelated page controls are ignored.
             best = {
               size,
               cells: ordered,
@@ -543,6 +754,10 @@ function makeQueensBotSource() {
     return best;
   }
 
+  /*
+    Convert normalized color strings into compact numeric region ids.
+    The solver only needs equality by region, not the original CSS color.
+  */
   function regionsFromColors(colors) {
     const ids = new Map();
     const regions = [];
@@ -553,6 +768,11 @@ function makeQueensBotSource() {
     return { regions, count: ids.size };
   }
 
+  /*
+    Return the live element for a cell reference.
+    React-style apps can replace DOM nodes after clicks, so a saved element may
+    become stale while the screen position is still correct.
+  */
   function currentCellElement(cellRef) {
     if (cellRef.element && cellRef.element.isConnected) return cellRef.element;
     const hit = document.elementFromPoint(cellRef.cx, cellRef.cy);
@@ -560,6 +780,7 @@ function makeQueensBotSource() {
     return clickable || hit || null;
   }
 
+  // Dispatch a pointer or mouse event at the cell center.
   function fireCellEvent(target, type, x, y) {
     const EventCtor = type.indexOf("pointer") === 0 && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
     target.dispatchEvent(new EventCtor(type, {
@@ -576,9 +797,14 @@ function makeQueensBotSource() {
     }));
   }
 
+  /*
+    Click the center of a cell using a real-looking event sequence.
+    Some frameworks listen to pointer/mouse down/up events before click.
+  */
   function clickCell(cellRef) {
     const element = currentCellElement(cellRef);
     if (!element) return false;
+    // Re-read the rect in case layout shifted since scanning.
     const rect = element.getBoundingClientRect();
     cellRef.cx = rect.left + rect.width / 2;
     cellRef.cy = rect.top + rect.height / 2;
@@ -594,6 +820,11 @@ function makeQueensBotSource() {
     return true;
   }
 
+  /*
+    Click a cell until it contains a queen.
+    The small retry loop handles UI update delay and stale DOM nodes, but stops
+    quickly so it does not cycle through unintended states if LinkedIn changes.
+  */
   async function setQueen(cellRef) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const element = currentCellElement(cellRef);
@@ -605,6 +836,13 @@ function makeQueensBotSource() {
     return !!element && cellHasQueen(element);
   }
 
+  /*
+    Main bot workflow:
+    1. Detect the visible board and its color regions.
+    2. Read any queens already placed by the user.
+    3. Solve with the pure solver.
+    4. Click only missing solution cells, paced by MIN_SOLVE_MS.
+  */
   async function run() {
     const started = performance.now();
     log("Scanning visible LinkedIn Queens board...");
@@ -614,18 +852,21 @@ function makeQueensBotSource() {
       return;
     }
 
+    // Convert CSS colors into numeric region ids for the solver.
     const regionData = regionsFromColors(grid.colors);
     if (regionData.count !== grid.size) {
       log("Found " + grid.size + "x" + grid.size + " grid, but color scan found " + regionData.count + " regions. The scanner likely picked the wrong cells.");
       return;
     }
 
+    // Preserve existing queens so the bot can continue a partially filled board.
     const fixedQueens = [];
     for (let i = 0; i < grid.cells.length; i++) {
       if (cellHasQueen(grid.cells[i].element)) fixedQueens.push(i);
     }
     log("Found " + grid.size + "x" + grid.size + " board with " + regionData.count + " regions and " + fixedQueens.length + " existing queens.");
 
+    // Run the solver on the scanned board description.
     const result = solveQueens({
       size: grid.size,
       regions: regionData.regions,
@@ -637,6 +878,7 @@ function makeQueensBotSource() {
       return;
     }
 
+    // Only click solution cells that do not already contain queens.
     const cellsToFill = [];
     for (const index of result.solution) {
       if (!cellHasQueen(grid.cells[index].element)) {
@@ -649,6 +891,7 @@ function makeQueensBotSource() {
       }
     }
 
+    // Click solution cells in solver order, spreading clicks over the requested duration.
     for (let step = 0; step < cellsToFill.length; step++) {
       const cell = cellsToFill[step];
       const targetAt = started + MIN_SOLVE_MS * (step + 1) / Math.max(1, cellsToFill.length);
@@ -664,11 +907,13 @@ function makeQueensBotSource() {
       }
     }
 
+    // If the puzzle was already filled, still respect the minimum visible duration.
     const finalWaitMs = started + MIN_SOLVE_MS - performance.now();
     if (finalWaitMs > 0) await sleep(finalWaitMs);
     log("Solved and filled in " + ((performance.now() - started) / 1000).toFixed(1) + "s. Search visited " + result.stats.visited + " nodes.");
   }
 
+  // Convert unexpected runtime failures into readable overlay messages.
   run().catch(error => {
     console.error(error);
     log(error && error.message ? error.message : String(error));
@@ -677,14 +922,25 @@ function makeQueensBotSource() {
 }
 
 function refreshBotCode() {
+  /*
+    Regenerate the textarea every time a setting changes.
+    The generated script embeds the current minimum duration as a literal number.
+  */
   botCodeEl.value = makeQueensBotSource();
 }
 
+/*
+  Copy helper with two paths:
+  1. navigator.clipboard for modern secure contexts.
+  2. a hidden textarea plus execCommand fallback, useful when this file is opened
+     from file:// or clipboard permissions are unavailable.
+*/
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch (error) {
+    // Old-school fallback: select a temporary textarea and copy the selection.
     const textarea = document.createElement("textarea");
     textarea.value = text;
     textarea.setAttribute("readonly", "");
@@ -698,12 +954,14 @@ async function copyText(text) {
   }
 }
 
+/* Copy raw JavaScript for the recommended DevTools Console workflow. */
 document.getElementById("copyBotBtn").addEventListener("click", async () => {
   refreshBotCode();
   const ok = await copyText(botCodeEl.value);
   botStatusEl.textContent = ok ? "Console bot copied." : "Copy failed. Select the code and copy it manually.";
 });
 
+/* Copy the same JavaScript as a bookmark URL. Long bookmarklets may be blocked. */
 document.getElementById("copyBookmarkletBtn").addEventListener("click", async () => {
   refreshBotCode();
   const bookmarklet = "javascript:" + encodeURIComponent(botCodeEl.value);
@@ -711,7 +969,9 @@ document.getElementById("copyBookmarkletBtn").addEventListener("click", async ()
   botStatusEl.textContent = ok ? "Bookmarklet copied." : "Copy failed. Select the code and copy it manually.";
 });
 
+/* Keep the preview in sync with the minimum-time setting. */
 minSolveSecondsInp.addEventListener("input", refreshBotCode);
+/* Fill the textarea when the page first loads. */
 refreshBotCode();
 </script>
 </body>
