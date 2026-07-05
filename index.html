@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queens Solver and Chrome Bot</title>
+<style>
+  :root {
+    --ink: #17202a;
+    --muted: #5c6670;
+    --line: #222;
+    --panel: #f4f6f8;
+    --accent: #7dd3fc;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f8fafc;
+  }
+
+  main {
+    width: min(920px, 100%);
+    margin: 0 auto;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) minmax(300px, 1fr);
+    gap: 24px;
+  }
+
+  h1 {
+    margin: 0 0 8px;
+    font-size: 1.55rem;
+    line-height: 1.2;
+  }
+
+  p {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .controls {
+    background: #fff;
+    border: 1px solid #dde3ea;
+    border-radius: 8px;
+    padding: 18px;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  label {
+    font-weight: 650;
+  }
+
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  input[type="number"] {
+    width: 96px;
+    padding: 8px;
+    border: 1px solid #b8c2cc;
+    border-radius: 6px;
+  }
+
+  button {
+    border: 1px solid #17202a;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    padding: 9px 12px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  button.primary {
+    background: var(--accent);
+  }
+
+  button:hover {
+    filter: brightness(0.97);
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 360px;
+    resize: vertical;
+    border: 1px solid #b8c2cc;
+    border-radius: 6px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .status-box {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #d5dde5;
+    background: var(--panel);
+    color: var(--muted);
+    min-height: 42px;
+  }
+
+  .rule-list {
+    margin: 16px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+
+  .rule-list li {
+    margin: 7px 0;
+  }
+
+  @media (max-width: 760px) {
+    main {
+      grid-template-columns: 1fr;
+      padding: 16px;
+    }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Queens Solver</h1>
+    <p>Generate a Chrome-console bot for LinkedIn Queens.</p>
+    <ul class="rule-list">
+      <li>One queen per row.</li>
+      <li>One queen per column.</li>
+      <li>One queen per colored region.</li>
+      <li>No queens on touching diagonals.</li>
+    </ul>
+  </section>
+
+  <section class="controls">
+    <div class="row">
+      <label for="minSolveSeconds">Minimum seconds</label>
+      <input id="minSolveSeconds" type="number" min="0" max="300" step="0.5" value="0">
+    </div>
+    <div class="row">
+      <button id="copyBotBtn" class="primary" type="button">Copy console bot</button>
+      <button id="copyBookmarkletBtn" type="button">Copy bookmarklet</button>
+    </div>
+    <textarea id="botCode" readonly spellcheck="false"></textarea>
+    <div id="botStatus" class="status-box">Bot script ready.</div>
+  </section>
+</main>
+
+<script>
+const minSolveSecondsInp = document.getElementById("minSolveSeconds");
+const botCodeEl = document.getElementById("botCode");
+const botStatusEl = document.getElementById("botStatus");
+
+function getMinimumSolveMs() {
+  const seconds = Number(minSolveSecondsInp.value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.min(seconds, 300) * 1000;
+}
+
+function solveQueens(puzzle, options = {}) {
+  const n = Number(puzzle.size);
+  const regions = Array.isArray(puzzle.regions) ? puzzle.regions : [];
+  const fixedQueens = Array.isArray(puzzle.fixedQueens) ? puzzle.fixedQueens : [];
+  const stats = options.stats || { visited: 0, backtracks: 0 };
+
+  function fail(message) {
+    return { solution: null, error: message, stats };
+  }
+
+  if (!Number.isInteger(n) || n < 4 || n > 14) {
+    return fail("Board size is invalid.");
+  }
+
+  if (regions.length !== n * n) {
+    return fail("Region data is incomplete.");
+  }
+
+  const regionSet = new Set(regions);
+  if (regionSet.size !== n) {
+    return fail("Expected " + n + " colored regions, found " + regionSet.size + ".");
+  }
+
+  const fixedByRow = new Map();
+  for (const index of fixedQueens) {
+    if (!Number.isInteger(index) || index < 0 || index >= n * n) {
+      return fail("A fixed queen is outside the board.");
+    }
+    const row = Math.floor(index / n);
+    const col = index % n;
+    if (fixedByRow.has(row) && fixedByRow.get(row) !== col) {
+      return fail("Two fixed queens are in the same row.");
+    }
+    fixedByRow.set(row, col);
+  }
+
+  const assignment = new Array(n).fill(-1);
+  const usedCols = new Set();
+  const usedRegions = new Set();
+
+  function regionAt(row, col) {
+    return regions[row * n + col];
+  }
+
+  function canPlace(row, col) {
+    if (assignment[row] !== -1 && assignment[row] !== col) return false;
+    if (usedCols.has(col)) return false;
+    const region = regionAt(row, col);
+    if (usedRegions.has(region)) return false;
+    for (let otherRow = 0; otherRow < n; otherRow++) {
+      const otherCol = assignment[otherRow];
+      if (otherCol === -1) continue;
+      if (Math.abs(otherRow - row) === 1 && Math.abs(otherCol - col) === 1) return false;
+    }
+    return true;
+  }
+
+  function place(row, col) {
+    assignment[row] = col;
+    usedCols.add(col);
+    usedRegions.add(regionAt(row, col));
+  }
+
+  function unplace(row, col) {
+    assignment[row] = -1;
+    usedCols.delete(col);
+    usedRegions.delete(regionAt(row, col));
+  }
+
+  for (const [row, col] of fixedByRow) {
+    if (!canPlace(row, col)) {
+      return fail("Fixed queens already conflict.");
+    }
+    place(row, col);
+  }
+
+  function legalColumns(row) {
+    if (fixedByRow.has(row)) return assignment[row] === fixedByRow.get(row) ? [fixedByRow.get(row)] : [];
+    const cols = [];
+    for (let col = 0; col < n; col++) {
+      if (canPlace(row, col)) cols.push(col);
+    }
+    return cols;
+  }
+
+  function chooseRow() {
+    let bestRow = -1;
+    let bestCols = null;
+    for (let row = 0; row < n; row++) {
+      if (assignment[row] !== -1) continue;
+      const cols = legalColumns(row);
+      if (!bestCols || cols.length < bestCols.length) {
+        bestRow = row;
+        bestCols = cols;
+        if (cols.length <= 1) break;
+      }
+    }
+    return { row: bestRow, cols: bestCols || [] };
+  }
+
+  function search() {
+    stats.visited++;
+    const choice = chooseRow();
+    if (choice.row === -1) return true;
+    if (choice.cols.length === 0) {
+      stats.backtracks++;
+      return false;
+    }
+
+    for (const col of choice.cols) {
+      place(choice.row, col);
+      if (search()) return true;
+      unplace(choice.row, col);
+    }
+    stats.backtracks++;
+    return false;
+  }
+
+  if (!search()) {
+    return fail("No solution found.");
+  }
+
+  const solution = assignment.map((col, row) => row * n + col);
+  return { solution, stats };
+}
+
+function makeQueensBotSource() {
+  return `(() => {
+  const solveQueens = ${solveQueens.toString()};
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const MIN_SOLVE_MS = ${getMinimumSolveMs()};
+
+  let overlay = document.getElementById("queens-bot-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "queens-bot-overlay";
+    overlay.style.cssText = [
+      "position:fixed",
+      "z-index:2147483647",
+      "top:12px",
+      "right:12px",
+      "max-width:380px",
+      "padding:12px 14px",
+      "border:1px solid #111",
+      "border-radius:8px",
+      "background:#eef9ff",
+      "color:#111",
+      "font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif",
+      "box-shadow:0 8px 28px rgba(0,0,0,.18)"
+    ].join(";");
+    document.body.appendChild(overlay);
+  }
+
+  function log(message) {
+    overlay.textContent = "Queens bot: " + message;
+    console.log("[Queens bot]", message);
+  }
+
+  function visibleRect(element, minSize) {
+    if (!element || element.nodeType !== 1) return null;
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return null;
+    const rect = element.getBoundingClientRect();
+    const minimum = minSize || 20;
+    if (rect.width < minimum || rect.height < minimum) return null;
+    if (rect.bottom < 0 || rect.right < 0 || rect.top > innerHeight || rect.left > innerWidth) return null;
+    return rect;
+  }
+
+  function squareish(rect) {
+    const side = (rect.width + rect.height) / 2;
+    const maxVisibleCell = Math.max(180, Math.min(420, Math.min(innerWidth, innerHeight) * 0.25));
+    return side >= 22 && side <= maxVisibleCell && Math.abs(rect.width - rect.height) <= Math.max(10, side * 0.35);
+  }
+
+  function cluster(entries, prop, tolerance) {
+    const groups = [];
+    const sorted = entries.slice().sort((a, b) => a[prop] - b[prop]);
+    for (const entry of sorted) {
+      const last = groups[groups.length - 1];
+      if (last && Math.abs(entry[prop] - last.avg) <= tolerance) {
+        last.items.push(entry);
+        last.avg = last.items.reduce((sum, item) => sum + item[prop], 0) / last.items.length;
+      } else {
+        groups.push({ avg: entry[prop], items: [entry] });
+      }
+    }
+    return groups;
+  }
+
+  function median(values) {
+    const sorted = values.slice().sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)] || 0;
+  }
+
+  function textBundle(element) {
+    const bits = [];
+    function addNodeHints(node) {
+      if (!node || node.nodeType !== 1) return;
+      bits.push(node.tagName || "");
+      if (node.attributes) {
+        for (const attr of Array.from(node.attributes)) {
+          bits.push(attr.name || "");
+          bits.push(attr.value || "");
+        }
+      }
+    }
+    addNodeHints(element);
+    bits.push(element.textContent || "");
+    element.querySelectorAll("*").forEach(addNodeHints);
+    try {
+      const before = getComputedStyle(element, "::before").content;
+      const after = getComputedStyle(element, "::after").content;
+      if (before && before !== "none") bits.push(before);
+      if (after && after !== "none") bits.push(after);
+    } catch (error) {}
+    return bits.join(" ").toLowerCase();
+  }
+
+  function meaningfulColor(color) {
+    if (!color || color === "transparent") return false;
+    const match = color.match(/rgba?\\(([^)]+)\\)/i);
+    if (!match) return true;
+    const parts = match[1].split(",").map(part => part.trim());
+    if (parts.length >= 4 && Number(parts[3]) === 0) return false;
+    return true;
+  }
+
+  function normalizeColor(color) {
+    const match = (color || "").match(/rgba?\\(([^)]+)\\)/i);
+    if (!match) return color || "unknown";
+    const parts = match[1].split(",").slice(0, 3).map(part => String(Math.round(Number(part.trim()))));
+    return parts.join(",");
+  }
+
+  function cellColor(cell) {
+    const nodes = [cell.element].concat(Array.from(cell.element.querySelectorAll("*")).slice(0, 60));
+    let best = null;
+    for (const node of nodes) {
+      const rect = visibleRect(node, 4);
+      if (!rect) continue;
+      const style = getComputedStyle(node);
+      const color = style.backgroundColor;
+      if (!meaningfulColor(color)) continue;
+      const area = rect.width * rect.height;
+      if (!best || area > best.area) best = { color, area };
+    }
+    if (best) return normalizeColor(best.color);
+    return normalizeColor(getComputedStyle(cell.element).backgroundColor);
+  }
+
+  function cellHasQueen(element) {
+    const text = textBundle(element);
+    return /(queen|crown|\\u2655|\\u265b)/i.test(text);
+  }
+
+  function candidateEntries() {
+    const selectors = [
+      "button",
+      "[role='button']",
+      "[role='gridcell']",
+      "[aria-label]",
+      "[class*='cell' i]",
+      "[class*='tile' i]",
+      "[class*='square' i]",
+      "[data-testid]"
+    ].join(",");
+    const primary = Array.from(document.querySelectorAll(selectors));
+    const fallback = Array.from(document.body.querySelectorAll("*"));
+    const raw = primary.concat(fallback);
+    const seen = new Set();
+    const entries = [];
+
+    for (const element of raw) {
+      if (["SCRIPT", "STYLE", "SVG", "PATH"].includes(element.tagName)) continue;
+      const target = element.closest("button,[role='button'],[role='gridcell']") || element;
+      if (seen.has(target)) continue;
+      const rect = visibleRect(target, 18);
+      if (!rect || !squareish(rect)) continue;
+      seen.add(target);
+      entries.push({
+        element: target,
+        rect,
+        cx: rect.left + rect.width / 2,
+        cy: rect.top + rect.height / 2,
+        side: (rect.width + rect.height) / 2
+      });
+    }
+
+    return entries;
+  }
+
+  function findGrid() {
+    const entries = candidateEntries();
+    findGrid.lastCandidateCount = entries.length;
+    if (entries.length < 16) return null;
+    const side = median(entries.map(entry => entry.side));
+    const tolerance = Math.max(8, side * 0.38);
+    const rowGroups = cluster(entries, "cy", tolerance).filter(group => group.items.length >= 4);
+    let best = null;
+
+    for (let size = 4; size <= 12; size++) {
+      for (let rowStart = 0; rowStart <= rowGroups.length - size; rowStart++) {
+        const rows = rowGroups.slice(rowStart, rowStart + size);
+        const rowItems = rows.flatMap(row => row.items);
+        const colGroups = cluster(rowItems, "cx", tolerance).filter(group => group.items.length >= Math.max(3, size - 2));
+
+        for (let colStart = 0; colStart <= colGroups.length - size; colStart++) {
+          const cols = colGroups.slice(colStart, colStart + size);
+          const cells = [];
+          let ok = true;
+
+          for (const row of rows) {
+            for (const col of cols) {
+              const hits = row.items
+                .filter(item => Math.abs(item.cx - col.avg) <= tolerance)
+                .sort((a, b) => Math.abs(a.cx - col.avg) - Math.abs(b.cx - col.avg));
+              if (hits.length === 0) {
+                ok = false;
+                break;
+              }
+              cells.push(hits[0]);
+            }
+            if (!ok) break;
+          }
+
+          if (!ok || new Set(cells.map(cell => cell.element)).size !== size * size) continue;
+          const left = Math.min(...cells.map(cell => cell.rect.left));
+          const top = Math.min(...cells.map(cell => cell.rect.top));
+          const right = Math.max(...cells.map(cell => cell.rect.right));
+          const bottom = Math.max(...cells.map(cell => cell.rect.bottom));
+          const width = right - left;
+          const height = bottom - top;
+          const aspect = width / height;
+          if (aspect < 0.75 || aspect > 1.35) continue;
+
+          const ordered = [];
+          for (const row of rows) {
+            const rowCells = cells
+              .filter(cell => Math.abs(cell.cy - row.avg) <= tolerance)
+              .sort((a, b) => a.cx - b.cx)
+              .slice(0, size);
+            ordered.push(...rowCells);
+          }
+          if (ordered.length !== size * size) continue;
+
+          const colors = ordered.map(cellColor);
+          const regionCount = new Set(colors).size;
+          const cellSide = median(cells.map(cell => cell.side));
+          const sizeSpread = Math.max(...cells.map(cell => Math.abs(cell.side - cellSide)));
+          const regionPenalty = Math.abs(regionCount - size) * width * height * 0.2;
+          const score = Math.abs(width - height) * 8 + width * height + sizeSpread * 30 + regionPenalty;
+
+          if (!best || score < best.score) {
+            best = {
+              size,
+              cells: ordered,
+              colors,
+              regionCount,
+              bounds: { left, top, right, bottom, width, height },
+              side: cellSide,
+              score
+            };
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  function regionsFromColors(colors) {
+    const ids = new Map();
+    const regions = [];
+    for (const color of colors) {
+      if (!ids.has(color)) ids.set(color, ids.size);
+      regions.push(ids.get(color));
+    }
+    return { regions, count: ids.size };
+  }
+
+  function currentCellElement(cellRef) {
+    if (cellRef.element && cellRef.element.isConnected) return cellRef.element;
+    const hit = document.elementFromPoint(cellRef.cx, cellRef.cy);
+    const clickable = hit && hit.closest && hit.closest("button,[role='button'],[role='gridcell']");
+    return clickable || hit || null;
+  }
+
+  function fireCellEvent(target, type, x, y) {
+    const EventCtor = type.indexOf("pointer") === 0 && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+    target.dispatchEvent(new EventCtor(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: type.indexOf("down") >= 0 ? 1 : 0,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true
+    }));
+  }
+
+  function clickCell(cellRef) {
+    const element = currentCellElement(cellRef);
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    cellRef.cx = rect.left + rect.width / 2;
+    cellRef.cy = rect.top + rect.height / 2;
+    const x = cellRef.cx;
+    const y = cellRef.cy;
+    const hit = document.elementFromPoint(x, y) || element;
+    const target = hit.closest && hit.closest("button,[role='button'],[role='gridcell']") || hit;
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+      fireCellEvent(target, type, x, y);
+    }
+    if (typeof target.click === "function") target.click();
+    else fireCellEvent(target, "click", x, y);
+    return true;
+  }
+
+  async function setQueen(cellRef) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const element = currentCellElement(cellRef);
+      if (element && cellHasQueen(element)) return true;
+      if (!clickCell(cellRef)) return false;
+      await sleep(180);
+    }
+    const element = currentCellElement(cellRef);
+    return !!element && cellHasQueen(element);
+  }
+
+  async function run() {
+    const started = performance.now();
+    log("Scanning visible LinkedIn Queens board...");
+    const grid = findGrid();
+    if (!grid) {
+      log("Could not find a colored square board. Detected " + (findGrid.lastCandidateCount || 0) + " square candidates.");
+      return;
+    }
+
+    const regionData = regionsFromColors(grid.colors);
+    if (regionData.count !== grid.size) {
+      log("Found " + grid.size + "x" + grid.size + " grid, but color scan found " + regionData.count + " regions. The scanner likely picked the wrong cells.");
+      return;
+    }
+
+    const fixedQueens = [];
+    for (let i = 0; i < grid.cells.length; i++) {
+      if (cellHasQueen(grid.cells[i].element)) fixedQueens.push(i);
+    }
+    log("Found " + grid.size + "x" + grid.size + " board with " + regionData.count + " regions and " + fixedQueens.length + " existing queens.");
+
+    const result = solveQueens({
+      size: grid.size,
+      regions: regionData.regions,
+      fixedQueens
+    }, { stats: { visited: 0, backtracks: 0 } });
+
+    if (!result.solution) {
+      log(result.error || "No solution found. The color scanner may have misread regions.");
+      return;
+    }
+
+    const cellsToFill = [];
+    for (const index of result.solution) {
+      if (!cellHasQueen(grid.cells[index].element)) {
+        cellsToFill.push({
+          index,
+          element: grid.cells[index].element,
+          cx: grid.cells[index].cx,
+          cy: grid.cells[index].cy
+        });
+      }
+    }
+
+    for (let step = 0; step < cellsToFill.length; step++) {
+      const cell = cellsToFill[step];
+      const targetAt = started + MIN_SOLVE_MS * (step + 1) / Math.max(1, cellsToFill.length);
+      const waitMs = targetAt - performance.now();
+      if (waitMs > 0) {
+        log("Placing queen " + (step + 1) + " of " + cellsToFill.length + "...");
+        await sleep(waitMs);
+      }
+      const ok = await setQueen(cell);
+      if (!ok) {
+        log("Solved logically, but could not set queen at cell " + (cell.index + 1) + ".");
+        return;
+      }
+    }
+
+    const finalWaitMs = started + MIN_SOLVE_MS - performance.now();
+    if (finalWaitMs > 0) await sleep(finalWaitMs);
+    log("Solved and filled in " + ((performance.now() - started) / 1000).toFixed(1) + "s. Search visited " + result.stats.visited + " nodes.");
+  }
+
+  run().catch(error => {
+    console.error(error);
+    log(error && error.message ? error.message : String(error));
+  });
+})();`;
+}
+
+function refreshBotCode() {
+  botCodeEl.value = makeQueensBotSource();
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  }
+}
+
+document.getElementById("copyBotBtn").addEventListener("click", async () => {
+  refreshBotCode();
+  const ok = await copyText(botCodeEl.value);
+  botStatusEl.textContent = ok ? "Console bot copied." : "Copy failed. Select the code and copy it manually.";
+});
+
+document.getElementById("copyBookmarkletBtn").addEventListener("click", async () => {
+  refreshBotCode();
+  const bookmarklet = "javascript:" + encodeURIComponent(botCodeEl.value);
+  const ok = await copyText(bookmarklet);
+  botStatusEl.textContent = ok ? "Bookmarklet copied." : "Copy failed. Select the code and copy it manually.";
+});
+
+minSolveSecondsInp.addEventListener("input", refreshBotCode);
+refreshBotCode();
+</script>
+</body>
+</html>
